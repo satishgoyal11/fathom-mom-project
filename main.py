@@ -68,8 +68,9 @@ async def handle_webhook(request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
+    # Model name updated to match the active Google GenAI SDK requirement
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-3.6-flash",
         contents=f"Generate structured Minutes of Meeting for:\n{transcript}"
     )
     mom_result = response.text
