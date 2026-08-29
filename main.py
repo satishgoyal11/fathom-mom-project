@@ -9,7 +9,9 @@ from fastapi import FastAPI, HTTPException, Request
 app = FastAPI()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+
+# Updated to current flash model string
+model = genai.GenerativeModel("gemini-2.5-flash")
 
 
 def send_email_via_resend(mom_text: str):
@@ -17,7 +19,7 @@ def send_email_via_resend(mom_text: str):
     destination_email = os.getenv("MY_EMAIL")
 
     if not resend_api_key or not destination_email:
-        print("Missing RESEND_API_KEY or MY_EMAIL environment variables.")
+        print("Error: Missing RESEND_API_KEY or MY_EMAIL environment variables.")
         return
 
     url = "https://api.resend.com/emails"
@@ -32,16 +34,16 @@ def send_email_via_resend(mom_text: str):
         "text": mom_text,
     }
 
-    response = requests.post(url, json=payload, headers=headers)
-    if response.status_code in [200, 201]:
-        print("Email sent successfully via Resend!")
-    else:
-        print(f"Resend Error: {response.text}")
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        print(f"Resend Status Code: {response.status_code}")
+        print(f"Resend Response Body: {response.text}")
+    except Exception as err:
+        print(f"Failed to connect to Resend API: {err}")
 
 
 @app.post("/webhook")
 async def handle_webhook(request: Request):
-    # Retrieve Fathom webhook signature headers
     webhook_id = request.headers.get("webhook-id")
     webhook_timestamp = request.headers.get("webhook-timestamp")
     webhook_signature = request.headers.get("webhook-signature")
@@ -49,7 +51,6 @@ async def handle_webhook(request: Request):
     raw_body = await request.body()
     secret = os.getenv("FATHOM_WEBHOOK_SECRET")
 
-    # Verify signature if secret is provided
     if secret and webhook_signature:
         signed_content = f"{webhook_id}.{webhook_timestamp}.{raw_body.decode('utf-8')}"
         secret_bytes = base64.b64decode(secret.split("_")[1])
@@ -69,16 +70,12 @@ async def handle_webhook(request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
-    # Generate MOM using Gemini
     response = model.generate_content(
         f"Generate structured Minutes of Meeting for:\n{transcript}"
     )
     mom_result = response.text
 
-    # Automatically send to your inbox
-    try:
-        send_email_via_resend(mom_result)
-    except Exception as e:
-        print(f"Failed to trigger email: {e}")
+    # Safely trigger email delivery
+    send_email_via_resend(mom_result)
 
     return {"status": "success", "mom": mom_result}
