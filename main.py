@@ -3,15 +3,13 @@ import hashlib
 import hmac
 import os
 import requests
-import google.generativeai as genai
+from google import genai
 from fastapi import FastAPI, HTTPException, Request
 
 app = FastAPI()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-# Model ID updated to gemini-3.6-flash as instructed by the API log
-model = genai.GenerativeModel("gemini-3.6-flash")
+# Automatically initializes using GEMINI_API_KEY environment variable
+client = genai.Client()
 
 
 def send_email_via_resend(mom_text: str):
@@ -70,12 +68,12 @@ async def handle_webhook(request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
-    response = model.generate_content(
-        f"Generate structured Minutes of Meeting for:\n{transcript}"
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=f"Generate structured Minutes of Meeting for:\n{transcript}"
     )
     mom_result = response.text
 
-    # Safely trigger email delivery
     send_email_via_resend(mom_result)
 
     return {"status": "success", "mom": mom_result}
