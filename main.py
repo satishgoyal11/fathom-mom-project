@@ -10,8 +10,8 @@ app = FastAPI()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Updated to current flash model string
-model = genai.GenerativeModel("gemini-2.5-flash")
+# Model ID updated to gemini-3.6-flash as instructed by the API log
+model = genai.GenerativeModel("gemini-3.6-flash")
 
 
 def send_email_via_resend(mom_text: str):
