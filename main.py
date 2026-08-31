@@ -34,25 +34,26 @@ def send_html_email_via_resend(mom_markdown: str):
         print("Error: Missing RESEND_API_KEY or MY_EMAIL environment variables.")
         return
 
-    # Convert Markdown output to rich HTML
+    # Convert Markdown to HTML
     mom_body_html = markdown.markdown(mom_markdown, extensions=['tables', 'fenced_code'])
 
-    # Styled HTML Template for professional look inside Gmail / Outlook
+    # High-quality styled HTML document layout
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
+        <meta charset="utf-8">
         <style>
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #2c3e50; background-color: #f4f6f9; padding: 20px; }}
-            .container {{ max-width: 750px; background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin: 0 auto; border-top: 5px solid #2563eb; }}
-            h1 {{ color: #1e293b; font-size: 22px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 0; }}
-            h2 {{ color: #2563eb; font-size: 17px; margin-top: 24px; font-weight: 600; border-left: 4px solid #2563eb; padding-left: 10px; }}
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #1e293b; background-color: #f8fafc; padding: 20px; }}
+            .container {{ max-width: 800px; background: #ffffff; padding: 35px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin: 0 auto; border-top: 6px solid #2563eb; }}
+            h1 {{ color: #0f172a; font-size: 24px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-top: 0; }}
+            h2 {{ color: #2563eb; font-size: 18px; margin-top: 24px; font-weight: 600; border-left: 4px solid #2563eb; padding-left: 10px; }}
             p, li {{ font-size: 14px; color: #334155; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
-            th {{ background-color: #f1f5f9; color: #1e293b; text-align: left; padding: 10px; border: 1px solid #cbd5e1; font-weight: 600; }}
+            th {{ background-color: #f1f5f9; color: #0f172a; text-align: left; padding: 12px; border: 1px solid #cbd5e1; font-weight: 600; }}
             td {{ padding: 10px; border: 1px solid #cbd5e1; color: #334155; }}
             tr:nth-child(even) {{ background-color: #f8fafc; }}
-            .footer {{ margin-top: 30px; font-size: 12px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px; }}
+            .footer {{ margin-top: 35px; font-size: 12px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px; }}
         </style>
     </head>
     <body>
@@ -65,6 +66,9 @@ def send_html_email_via_resend(mom_markdown: str):
     </html>
     """
 
+    # Encode HTML into base64 to attach as a downloadable .doc file (opens in Microsoft Word)
+    doc_base64 = base64.b64encode(full_html.encode('utf-8')).decode('utf-8')
+
     url = "https://api.resend.com/emails"
     headers = {
         "Authorization": f"Bearer {resend_api_key}",
@@ -75,6 +79,12 @@ def send_html_email_via_resend(mom_markdown: str):
         "to": [destination_email],
         "subject": "📄 Executive Minutes of Meeting (MOM)",
         "html": full_html,
+        "attachments": [
+            {
+                "filename": "Minutes_of_Meeting.doc",
+                "content": doc_base64
+            }
+        ]
     }
 
     try:
