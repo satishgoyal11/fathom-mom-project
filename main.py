@@ -2,15 +2,19 @@ import base64
 import hashlib
 import hmac
 import os
+import time
 from datetime import datetime
+import zoneinfo
 import requests
 import markdown
 from google import genai
 from fastapi import FastAPI, HTTPException, Request
 
 app = FastAPI()
-
 client = genai.Client()
+
+# Deduplication cache: stores processed webhook IDs and their timestamp
+PROCESSED_WEBHOOKS = {}
 
 SYSTEM_PROMPT = """
 You are an executive assistant creating high-grade Minutes of Meeting (MOM).
@@ -36,10 +40,8 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
         print("Error: Missing RESEND_API_KEY or MY_EMAIL environment variables.")
         return
 
-    # Convert Markdown to HTML
     mom_body_html = markdown.markdown(mom_markdown, extensions=['tables', 'fenced_code'])
 
-    # Build High-Quality HTML with Header Metadata
     full_html = f"""
     <!DOCTYPE html>
     <html>
@@ -77,6 +79,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
     """
 
     doc_base64 = base64.b64encode(full_html.encode('utf-8')).decode('utf-8')
+    clean_title = "".join([c if c.isalnum() else "_" for c in meeting_title])
 
     url = "https://api.resend.com/emails"
     headers = {
@@ -90,7 +93,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
         "html": full_html,
         "attachments": [
             {
-                "filename": f"MOM_{meeting_title.replace(' ', '_')}.doc",
+                "filename": f"MOM_{clean_title}.doc",
                 "content": doc_base64
             }
         ]
@@ -99,17 +102,30 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
     try:
         response = requests.post(url, json=payload, headers=headers)
         print(f"Resend Status Code: {response.status_code}")
-        print(f"Resend Response Body: {response.text}")
     except Exception as err:
         print(f"Failed to connect to Resend API: {err}")
 
 
 @app.post("/webhook")
 async def handle_webhook(request: Request):
-    webhook_id = request.headers.get("webhook-id")
+    webhook_id = request.headers.get("webhook-id") or request.headers.get("x-request-id")
     webhook_timestamp = request.headers.get("webhook-timestamp")
     webhook_signature = request.headers.get("webhook-signature")
 
+    # --- DEDUPLICATION CHECK ---
+    current_time = time.time()
+    # Clean up entries older than 10 minutes (600 seconds)
+    expired_keys = [k for k, v in PROCESSED_WEBHOOKS.items() if current_time - v > 600]
+    for k in expired_keys:
+        del PROCESSED_WEBHOOKS[k]
+
+    if webhook_id:
+        if webhook_id in PROCESSED_WEBHOOKS:
+            print(f"Duplicate webhook detected ({webhook_id}). Skipping execution.")
+            return {"status": "ignored", "reason": "Duplicate webhook payload"}
+        PROCESSED_WEBHOOKS[webhook_id] = current_time
+
+    # --- SIGNATURE VERIFICATION ---
     raw_body = await request.body()
     secret = os.getenv("FATHOM_WEBHOOK_SECRET")
 
@@ -128,21 +144,23 @@ async def handle_webhook(request: Request):
 
     body = await request.json()
     
-    # Extract Metadata directly from Fathom Payload
     meeting_title = body.get("title") or body.get("name") or "General Discussion"
     
-    # Parse Date/Time
+    # --- IST TIME ZONE CONVERSION ---
     created_at_raw = body.get("created_at") or body.get("started_at")
     if created_at_raw:
         try:
-            dt = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
-            meeting_date = dt.strftime("%B %d, %Y at %I:%M %p UTC")
-        except Exception:
+            dt_utc = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+            ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+            dt_ist = dt_utc.astimezone(ist_tz)
+            meeting_date = dt_ist.strftime("%B %d, %Y at %I:%M %p IST")
+        except Exception as e:
+            print(f"Timestamp parsing error: {e}")
             meeting_date = created_at_raw
     else:
-        meeting_date = datetime.utcnow().strftime("%B %d, %Y")
+        ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        meeting_date = datetime.now(ist_tz).strftime("%B %d, %Y at %I:%M %p IST")
 
-    # Extract Participant Names
     attendees_data = body.get("recording_attendees") or body.get("attendees") or []
     attendees_list = []
     if isinstance(attendees_data, list):
@@ -156,7 +174,6 @@ async def handle_webhook(request: Request):
     
     attendees_str = ", ".join(attendees_list) if attendees_list else "Not Specified"
 
-    # Extract Transcript
     transcript = body.get("transcript", "")
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
