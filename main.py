@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import zoneinfo
 import requests
 import markdown
@@ -16,20 +16,40 @@ client = genai.Client()
 PROCESSED_WEBHOOKS = {}
 
 SYSTEM_PROMPT = """
-You are an executive assistant creating high-grade Minutes of Meeting (MOM) for IT and Engineering projects.
+You are an executive assistant creating high-grade Minutes of Meeting (MOM).
 Analyze the provided transcript and produce a detailed, highly structured summary.
 
-Do NOT repeat the Meeting Title, Date/Time, or Attendees header at the top, as those will be inserted dynamically by the system.
+Do NOT repeat the Meeting Title, Date/Time, or Attendees header at the very top, as those will be inserted dynamically by the system.
 
 Structure your response starting directly from these sections:
-1. Executive Summary: High-level overview of the meeting purpose, stakeholders present, and key outcomes.
-2. Key Discussion Points: Detailed bulleted breakdown of technical requirements, parameters, and operational details.
-3. Decisions Made: Clear bulleted list of finalized technical and commercial decisions.
-4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority. Use specific dates where discussed.
-5. Risks & Open Questions: Any unresolved technical, operational, or commercial risks.
+1. Executive Summary: High-level overview of the meeting purpose and key outcomes.
+2. Key Discussion Points: Detailed bulleted breakdown of major topics, insights, and updates shared.
+3. Decisions Made: Clear bulleted list of finalized decisions.
+4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority.
+5. Risks & Open Questions: Any unresolved issues, dependencies, or items for the next meeting.
 
 Be thorough, professional, and clear. Avoid generic placeholder text.
 """
+
+def generate_content_with_retry(prompt: str, transcript: str) -> str:
+    """Generates content with automatic retry and model fallback on 503 errors."""
+    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
+    
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                print(f"Attempting generation with {model_name} (Attempt {attempt + 1})...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=f"{prompt}\n\nTranscript:\n{transcript}"
+                )
+                if response.text:
+                    return response.text
+            except Exception as e:
+                print(f"API Error on {model_name} (Attempt {attempt + 1}): {e}")
+                time.sleep(2 * (attempt + 1))  # Wait 2s, 4s, 6s before retrying
+                
+    raise RuntimeError("All Gemini API attempts failed due to service unavailability.")
 
 def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_date: str, attendees_str: str):
     resend_api_key = os.getenv("RESEND_API_KEY")
@@ -39,7 +59,6 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
         print("Error: Missing RESEND_API_KEY or MY_EMAIL environment variables.")
         return
 
-    # Clean up HR lines for word rendering
     clean_markdown = mom_markdown.replace("<hr />", "").replace("---", "")
     mom_body_html = markdown.markdown(clean_markdown, extensions=['tables', 'fenced_code'])
 
@@ -55,7 +74,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
             .meta-box {{ background-color: #f1f5f9; padding: 15px 20px; border-radius: 6px; margin-bottom: 25px; border-left: 4px solid #2563eb; }}
             .meta-item {{ font-size: 14px; color: #334155; margin: 4px 0; }}
             .meta-item strong {{ color: #0f172a; }}
-            h2, h3 {{ color: #2563eb; font-size: 18px; margin-top: 24px; font-weight: 600; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }}
+            h2, h3 {{ color: #2563eb; font-size: 18px; margin-top: 24px; font-weight: 600; border-left: 4px solid #2563eb; padding-left: 10px; }}
             p, li {{ font-size: 14px; color: #334155; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
             th {{ background-color: #f1f5f9; color: #0f172a; text-align: left; padding: 12px; border: 1px solid #cbd5e1; font-weight: 600; }}
@@ -143,7 +162,6 @@ async def handle_webhook(request: Request):
     
     meeting_title = body.get("title") or body.get("name") or "General Discussion"
     
-    # IST Time Conversion
     created_at_raw = body.get("created_at") or body.get("started_at")
     ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
     if created_at_raw:
@@ -156,11 +174,9 @@ async def handle_webhook(request: Request):
     else:
         meeting_date = datetime.now(ist_tz).strftime("%B %d, %Y at %I:%M %p IST")
 
-    # MULTI-FALLBACK PARTICIPANT EXTRACTION
     attendees_list = []
-    
-    # 1. Try recording_attendees
     attendees_data = body.get("recording_attendees") or body.get("attendees") or []
+    
     if isinstance(attendees_data, list):
         for att in attendees_data:
             if isinstance(att, dict):
@@ -170,24 +186,20 @@ async def handle_webhook(request: Request):
             elif isinstance(att, str):
                 attendees_list.append(att)
 
-    # 2. Try default speakers array if recording_attendees is empty
     if not attendees_list:
         speakers_data = body.get("speakers") or []
         for spk in speakers_data:
             if isinstance(spk, dict) and spk.get("name"):
                 attendees_list.append(spk.get("name"))
 
-    attendees_str = ", ".join(list(set(attendees_list))) if attendees_list else "Extracted from Transcript"
+    attendees_str = ", ".join(list(set(attendees_list))) if attendees_list else "Extracted from Call"
 
     transcript = body.get("transcript", "")
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=f"{SYSTEM_PROMPT}\n\nMeeting Title: {meeting_title}\nTranscript:\n{transcript}"
-    )
-    mom_result = response.text
+    # Generate MOM using retry wrapper
+    mom_result = generate_content_with_retry(SYSTEM_PROMPT, transcript)
 
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
 
