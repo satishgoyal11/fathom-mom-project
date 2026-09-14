@@ -32,8 +32,8 @@ Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
 def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content using updated Gemini Flash/Pro models with retry logic."""
-    models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
+    """Generates content using valid Gemini models with automatic retry logic."""
+    models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"]
     
     for model_name in models_to_try:
         for attempt in range(3):
@@ -48,7 +48,7 @@ def generate_content_with_retry(prompt: str, transcript: str) -> str:
                     return response.text
             except Exception as e:
                 print(f"API Error on {model_name} (Attempt {attempt + 1}): {e}")
-                time.sleep(2 * (attempt + 1))  # Exponential backoff (2s, 4s, 6s)
+                time.sleep(2 * (attempt + 1))
                 
     raise RuntimeError("All Gemini API attempts failed due to service unavailability.")
 
