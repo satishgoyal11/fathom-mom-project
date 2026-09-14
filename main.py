@@ -32,8 +32,8 @@ Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
 def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content with automatic retry and model fallback on 503 errors."""
-    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
+    """Generates content using valid Gemini Flash models with retry logic."""
+    models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
     
     for model_name in models_to_try:
         for attempt in range(3):
@@ -43,11 +43,12 @@ def generate_content_with_retry(prompt: str, transcript: str) -> str:
                     model=model_name,
                     contents=f"{prompt}\n\nTranscript:\n{transcript}"
                 )
-                if response.text:
+                if response and response.text:
+                    print(f"Successfully generated response using {model_name}")
                     return response.text
             except Exception as e:
                 print(f"API Error on {model_name} (Attempt {attempt + 1}): {e}")
-                time.sleep(2 * (attempt + 1))  # Wait 2s, 4s, 6s before retrying
+                time.sleep(2 * (attempt + 1))  # Exponential backoff (2s, 4s, 6s)
                 
     raise RuntimeError("All Gemini API attempts failed due to service unavailability.")
 
@@ -198,7 +199,7 @@ async def handle_webhook(request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
-    # Generate MOM using retry wrapper
+    # Generate MOM using retry wrapper with valid model names
     mom_result = generate_content_with_retry(SYSTEM_PROMPT, transcript)
 
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
