@@ -32,7 +32,7 @@ Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
 def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content using valid Gemini Flash models with retry logic."""
+    """Generates content using updated Gemini Flash/Pro models with retry logic."""
     models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro"]
     
     for model_name in models_to_try:
@@ -199,7 +199,6 @@ async def handle_webhook(request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
-    # Generate MOM using retry wrapper with valid model names
     mom_result = generate_content_with_retry(SYSTEM_PROMPT, transcript)
 
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
