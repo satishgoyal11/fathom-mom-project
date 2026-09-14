@@ -31,11 +31,38 @@ Structure your response starting directly from these sections:
 Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
+def get_active_model_name():
+    """Queries the Gemini API to get the first available model name."""
+    try:
+        models = list(client.models.list())
+        for m in models:
+            name = getattr(m, 'name', '') or getattr(m, 'model_id', '')
+            if 'flash' in name.lower() and 'generateContent' in getattr(m, 'supported_generation_methods', ['generateContent']):
+                print(f"Discovered active Flash model from API: {name}")
+                return name
+        if models:
+            first_name = getattr(models[0], 'name', 'gemini-3.6-flash')
+            print(f"Fallback to first available model from API: {first_name}")
+            return first_name
+    except Exception as err:
+        print(f"Failed to list models dynamically: {err}")
+    return "gemini-3.6-flash"
+
 def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content using standard Gemini 1.5 Flash with backoff retry."""
-    models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    """Generates content with automatic model resolution and retry logic."""
+    discovered_model = get_active_model_name()
+    models_to_try = [
+        discovered_model,
+        "gemini-3.6-flash",
+        "models/gemini-1.5-flash",
+        "models/gemini-2.0-flash"
+    ]
     
-    for model_name in models_to_try:
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+    
+    for model_name in unique_models:
         for attempt in range(3):
             try:
                 print(f"Attempting generation with {model_name} (Attempt {attempt + 1})...")
@@ -44,13 +71,13 @@ def generate_content_with_retry(prompt: str, transcript: str) -> str:
                     contents=f"{prompt}\n\nTranscript:\n{transcript}"
                 )
                 if response and response.text:
-                    print(f"Successfully generated response using {model_name}")
+                    print(f"Successfully generated MOM using {model_name}")
                     return response.text
             except Exception as e:
                 print(f"API Error on {model_name} (Attempt {attempt + 1}): {e}")
                 time.sleep(2 * (attempt + 1))
                 
-    raise RuntimeError("All Gemini API attempts failed.")
+    raise RuntimeError("All Gemini API model attempts failed.")
 
 def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_date: str, attendees_str: str):
     resend_api_key = os.getenv("RESEND_API_KEY")
