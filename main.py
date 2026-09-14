@@ -32,7 +32,7 @@ Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
 def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content using valid Gemini models with automatic retry logic."""
+    """Generates content using valid active Gemini models with fallback and retry logic."""
     models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"]
     
     for model_name in models_to_try:
