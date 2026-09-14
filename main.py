@@ -32,8 +32,8 @@ Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
 def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content using valid active Gemini models with fallback and retry logic."""
-    models_to_try = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"]
+    """Generates content using standard Gemini 1.5 Flash with backoff retry."""
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-pro"]
     
     for model_name in models_to_try:
         for attempt in range(3):
@@ -50,7 +50,7 @@ def generate_content_with_retry(prompt: str, transcript: str) -> str:
                 print(f"API Error on {model_name} (Attempt {attempt + 1}): {e}")
                 time.sleep(2 * (attempt + 1))
                 
-    raise RuntimeError("All Gemini API attempts failed due to service unavailability.")
+    raise RuntimeError("All Gemini API attempts failed.")
 
 def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_date: str, attendees_str: str):
     resend_api_key = os.getenv("RESEND_API_KEY")
