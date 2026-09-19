@@ -40,8 +40,8 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Active Gemini endpoints
-    models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
+    # Updated active model sequence based on API feedback
+    models = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
     full_prompt = f"{prompt}\n\nTranscript:\n{transcript}"
 
     for model_name in models:
