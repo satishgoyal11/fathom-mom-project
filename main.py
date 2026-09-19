@@ -3,15 +3,17 @@ import hashlib
 import hmac
 import os
 import time
+import json
 from datetime import datetime
 import zoneinfo
 import requests
 import markdown
+import gspread
+from google.oauth2.service_account import Credentials
 from google import genai
 from fastapi import FastAPI, HTTPException, Request
 
 app = FastAPI()
-client = genai.Client()
 
 PROCESSED_WEBHOOKS = {}
 
@@ -31,30 +33,79 @@ Structure your response starting directly from these sections:
 Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
-def generate_content_with_retry(prompt: str, transcript: str) -> str:
-    """Generates content using updated Gemini Flash models with automatic retry logic."""
-    models_to_try = [
-        "gemini-3.6-flash",
-        "models/gemini-1.5-flash",
-        "models/gemini-2.0-flash"
-    ]
+def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
+    """Generates MOM using Gemini with fallback model sequence."""
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not gemini_key:
+        raise RuntimeError("GEMINI_API_KEY is missing from environment variables.")
+
+    client = genai.Client(api_key=gemini_key)
+    models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
     
-    for model_name in models_to_try:
-        for attempt in range(3):
-            try:
-                print(f"Attempting generation with {model_name} (Attempt {attempt + 1})...")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=f"{prompt}\n\nTranscript:\n{transcript}"
-                )
-                if response and response.text:
-                    print(f"Successfully generated MOM using {model_name}")
-                    return response.text
-            except Exception as e:
-                print(f"API Error on {model_name} (Attempt {attempt + 1}): {e}")
-                time.sleep(2 * (attempt + 1))
-                
-    raise RuntimeError("All Gemini API model attempts failed.")
+    full_prompt = f"{prompt}\n\nTranscript:\n{transcript}"
+
+    for model_name in models:
+        try:
+            print(f"Attempting MOM generation with Gemini model: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=full_prompt,
+            )
+            if response.text:
+                print(f"Successfully generated response using {model_name}")
+                return response.text
+        except Exception as e:
+            print(f"Gemini Error on {model_name}: {e}")
+            time.sleep(2)
+
+    raise RuntimeError("All Gemini model generation attempts failed.")
+
+def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
+    """Parses action items from MOM markdown and appends them to Google Sheets."""
+    credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    spreadsheet_id = os.getenv("SPREADSHEET_ID")
+
+    if not credentials_json or not spreadsheet_id:
+        print("Google Sheets credentials or Spreadsheet ID missing.")
+        return
+
+    try:
+        creds_dict = json.loads(credentials_json)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        gc = gspread.authorize(creds)
+        sheet = gc.open_by_key(spreadsheet_id).sheet1
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        lines = mom_markdown.split("\n")
+        
+        for line in lines:
+            if "|" in line:
+                parts = [p.strip() for p in line.split("|") if p.strip()]
+                if len(parts) >= 4:
+                    first_col = parts[0].lower()
+                    if "action item" in first_col or "---" in first_col or "task" in first_col:
+                        continue
+                    
+                    action_item, owner, deadline, priority = parts[0], parts[1], parts[2], parts[3]
+                    
+                    sheet.append_row([
+                        meeting_title,
+                        today_str,
+                        action_item,
+                        owner,
+                        deadline,
+                        priority,
+                        "Pending",
+                        "No"
+                    ])
+        print("Successfully synced action items to Google Sheets.")
+    except Exception as e:
+        print(f"Error appending to Google Sheets: {e}")
 
 def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_date: str, attendees_str: str):
     resend_api_key = os.getenv("RESEND_API_KEY")
@@ -79,7 +130,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
             .meta-box {{ background-color: #f1f5f9; padding: 15px 20px; border-radius: 6px; margin-bottom: 25px; border-left: 4px solid #2563eb; }}
             .meta-item {{ font-size: 14px; color: #334155; margin: 4px 0; }}
             .meta-item strong {{ color: #0f172a; }}
-            h2, h3 {{ color: #2563eb; font-size: 18px; margin-top: 24px; font-weight: 600; border-left: 4px solid #2563eb; padding-left: 10px; }}
+            h2, h3 {{ color: #1d4ed8; font-size: 18px; margin-top: 24px; font-weight: 600; border-left: 4px solid #2563eb; padding-left: 10px; }}
             p, li {{ font-size: 14px; color: #334155; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
             th {{ background-color: #f1f5f9; color: #0f172a; text-align: left; padding: 12px; border: 1px solid #cbd5e1; font-weight: 600; }}
@@ -97,7 +148,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
                 <div class="meta-item"><strong>Participants:</strong> {attendees_str}</div>
             </div>
             {mom_body_html}
-            <div class="footer">Generated automatically via Fathom & Gemini AI</div>
+            <div class="footer">Generated automatically via AI Engine</div>
         </div>
     </body>
     </html>
@@ -112,7 +163,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
         "Content-Type": "application/json",
     }
     payload = {
-        "from": "Fathom MOM System <onboarding@resend.dev>",
+        "from": "Executive MOM System <onboarding@resend.dev>",
         "to": [destination_email],
         "subject": f"📄 MOM: {meeting_title}",
         "html": full_html,
@@ -203,8 +254,12 @@ async def handle_webhook(request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="No transcript found")
 
-    mom_result = generate_content_with_retry(SYSTEM_PROMPT, transcript)
+    mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, transcript)
 
+    # Send HTML Email
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
+
+    # Sync action items to Google Sheets
+    append_action_items_to_sheets(mom_result, meeting_title)
 
     return {"status": "success", "mom": mom_result}
