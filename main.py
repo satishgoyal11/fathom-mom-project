@@ -32,16 +32,16 @@ Structure your response starting directly from these sections:
 
 Be thorough, professional, and clear. Avoid generic placeholder text.
 """
-
 def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
-    """Generates MOM using Gemini with fallback model sequence."""
     gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not gemini_key:
         print("ERROR: Neither GEMINI_API_KEY nor GOOGLE_API_KEY was found in environment variables.")
         raise RuntimeError("GEMINI_API_KEY is missing from environment variables.")
 
     client = genai.Client(api_key=gemini_key)
-    models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
+    
+    # Updated active model sequence
+    models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]
     full_prompt = f"{prompt}\n\nTranscript:\n{transcript}"
 
     for model_name in models:
@@ -55,7 +55,6 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
                 print(f"Successfully generated response using {model_name}")
                 return response.text
         except Exception as e:
-            # Print exact error type and details to Render logs
             print(f"FAILED on model {model_name}: {type(e).__name__} - {e}")
             time.sleep(1)
 
