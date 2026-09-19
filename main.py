@@ -61,8 +61,37 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     raise RuntimeError("All Gemini model generation attempts failed.")
 
+import re
+from datetime import datetime, timedelta
+
+def parse_deadline_to_date(deadline_str: str) -> str:
+    """Converts relative strings like '2 Weeks', '1 Month', or 'Immediate' into YYYY-MM-DD strings."""
+    today = datetime.now()
+    text = deadline_str.strip().lower()
+
+    if not text or "immediate" in text or "asap" in text or "today" in text:
+        return today.strftime("%Y-%m-%d")
+
+    # Match numbers followed by days/weeks/months (e.g. "2 weeks", "1 week", "3 days")
+    match = re.search(r"(\d+)\s*(day|week|month)", text)
+    if match:
+        num = int(match.group(1))
+        unit = match.group(2)
+
+        if "day" in unit:
+            target_date = today + timedelta(days=num)
+        elif "week" in unit:
+            target_date = today + timedelta(weeks=num)
+        elif "month" in unit:
+            target_date = today + timedelta(days=num * 30)
+            
+        return target_date.strftime("%Y-%m-%d")
+
+    # Fallback to current date if parsing fails
+    return today.strftime("%Y-%m-%d")
+
 def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
-    """Parses action items from MOM markdown and appends them to Google Sheets."""
+    """Parses action items from MOM markdown and appends calculated dates to Google Sheets."""
     credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
     spreadsheet_id = os.getenv("SPREADSHEET_ID")
 
@@ -81,7 +110,6 @@ def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
         sheet = gc.open_by_key(spreadsheet_id).sheet1
 
         today_str = datetime.now().strftime("%Y-%m-%d")
-
         lines = mom_markdown.split("\n")
         
         for line in lines:
@@ -92,19 +120,25 @@ def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
                     if "action item" in first_col or "---" in first_col or "task" in first_col:
                         continue
                     
-                    action_item, owner, deadline, priority = parts[0], parts[1], parts[2], parts[3]
+                    action_item = parts[0]
+                    owner = parts[1]
+                    raw_deadline = parts[2]
+                    priority = parts[3]
+                    
+                    # Convert text to standard YYYY-MM-DD date
+                    calculated_deadline = parse_deadline_to_date(raw_deadline)
                     
                     sheet.append_row([
                         meeting_title,
                         today_str,
                         action_item,
                         owner,
-                        deadline,
+                        calculated_deadline,
                         priority,
                         "Pending",
                         "No"
                     ])
-        print("Successfully synced action items to Google Sheets.")
+        print("Successfully synced action items to Google Sheets with calculated dates.")
     except Exception as e:
         print(f"Error appending to Google Sheets: {e}")
 
