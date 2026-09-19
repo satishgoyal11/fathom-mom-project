@@ -27,7 +27,8 @@ Structure your response starting directly from these sections:
 1. Executive Summary: High-level overview of the meeting purpose and key outcomes.
 2. Key Discussion Points: Detailed bulleted breakdown of major topics, insights, and updates shared.
 3. Decisions Made: Clear bulleted list of finalized decisions.
-4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority.
+4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority. 
+NOTE: The Deadline column MUST be formatted as an explicit ISO date (YYYY-MM-DD), estimating based on meeting discussion if needed. Never use relative text like "1 Week" or "Immediate".
 5. Risks & Open Questions: Any unresolved issues, dependencies, or items for the next meeting.
 
 Be thorough, professional, and clear. Avoid generic placeholder text.
