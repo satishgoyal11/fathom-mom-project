@@ -4,7 +4,8 @@ import hmac
 import os
 import time
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 import zoneinfo
 import requests
 import markdown
@@ -21,18 +22,52 @@ SYSTEM_PROMPT = """
 You are an executive assistant creating high-grade Minutes of Meeting (MOM).
 Analyze the provided transcript and produce a detailed, highly structured summary.
 
-Do NOT repeat the Meeting Title, Date/Time, or Attendees header at the very top, as those will be inserted dynamically by the system.
+Do NOT repeat the Meeting Title, Date/Time, or Attendees header at the top.
 
 Structure your response starting directly from these sections:
 1. Executive Summary: High-level overview of the meeting purpose and key outcomes.
 2. Key Discussion Points: Detailed bulleted breakdown of major topics, insights, and updates shared.
 3. Decisions Made: Clear bulleted list of finalized decisions.
-4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority. 
-NOTE: The Deadline column MUST be formatted as an explicit ISO date (YYYY-MM-DD), estimating based on meeting discussion if needed. Never use relative text like "1 Week" or "Immediate".
+4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority.
+   CRITICAL FOR DEADLINE: The Deadline column MUST be an explicit calendar date formatted strictly as YYYY-MM-DD. Calculate the target date relative to today's date based on the discussion (e.g., if the transcript says "in 2 weeks", output the exact date two weeks from today). NEVER use text like "1 Week", "3-4 Weeks", or "Immediate".
 5. Risks & Open Questions: Any unresolved issues, dependencies, or items for the next meeting.
 
 Be thorough, professional, and clear. Avoid generic placeholder text.
 """
+
+def parse_deadline_to_date(deadline_str: str) -> str:
+    """Extracts ISO date or converts text ranges like '3-4 weeks' to explicit dates."""
+    today = datetime.now()
+    text = deadline_str.strip().lower()
+
+    # 1. Check if Gemini already provided a valid YYYY-MM-DD date
+    iso_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
+    if iso_match:
+        return iso_match.group(0)
+
+    if not text or "immediate" in text or "asap" in text or "today" in text:
+        return today.strftime("%Y-%m-%d")
+
+    # 2. Extract digits from single numbers or ranges (e.g. "3-4 weeks", "2 weeks", "1 month")
+    numbers = [int(n) for n in re.findall(r"\d+", text)]
+    
+    if numbers:
+        # If a range like "3-4 weeks" is given, take the upper bound (4 weeks)
+        num = numbers[-1]
+        
+        if "day" in text:
+            target_date = today + timedelta(days=num)
+        elif "week" in text:
+            target_date = today + timedelta(weeks=num)
+        elif "month" in text:
+            target_date = today + timedelta(days=num * 30)
+        else:
+            target_date = today + timedelta(days=num)
+            
+        return target_date.strftime("%Y-%m-%d")
+
+    return (today + timedelta(days=7)).strftime("%Y-%m-%d")
+
 def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
     gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not gemini_key:
@@ -40,10 +75,12 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
         raise RuntimeError("GEMINI_API_KEY is missing from environment variables.")
 
     client = genai.Client(api_key=gemini_key)
-    
-    # Updated active model sequence based on API feedback
     models = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
-    full_prompt = f"{prompt}\n\nTranscript:\n{transcript}"
+    
+    # Inject current date explicitly into Gemini's runtime context
+    today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
+    dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
+    full_prompt = f"{dynamic_prompt}\n\nTranscript:\n{transcript}"
 
     for model_name in models:
         try:
@@ -61,37 +98,7 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     raise RuntimeError("All Gemini model generation attempts failed.")
 
-import re
-from datetime import datetime, timedelta
-
-def parse_deadline_to_date(deadline_str: str) -> str:
-    """Converts relative strings like '2 Weeks', '1 Month', or 'Immediate' into YYYY-MM-DD strings."""
-    today = datetime.now()
-    text = deadline_str.strip().lower()
-
-    if not text or "immediate" in text or "asap" in text or "today" in text:
-        return today.strftime("%Y-%m-%d")
-
-    # Match numbers followed by days/weeks/months (e.g. "2 weeks", "1 week", "3 days")
-    match = re.search(r"(\d+)\s*(day|week|month)", text)
-    if match:
-        num = int(match.group(1))
-        unit = match.group(2)
-
-        if "day" in unit:
-            target_date = today + timedelta(days=num)
-        elif "week" in unit:
-            target_date = today + timedelta(weeks=num)
-        elif "month" in unit:
-            target_date = today + timedelta(days=num * 30)
-            
-        return target_date.strftime("%Y-%m-%d")
-
-    # Fallback to current date if parsing fails
-    return today.strftime("%Y-%m-%d")
-
 def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
-    """Parses action items from MOM markdown and appends calculated dates to Google Sheets."""
     credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
     spreadsheet_id = os.getenv("SPREADSHEET_ID")
 
@@ -125,7 +132,6 @@ def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
                     raw_deadline = parts[2]
                     priority = parts[3]
                     
-                    # Convert text to standard YYYY-MM-DD date
                     calculated_deadline = parse_deadline_to_date(raw_deadline)
                     
                     sheet.append_row([
@@ -138,7 +144,7 @@ def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
                         "Pending",
                         "No"
                     ])
-        print("Successfully synced action items to Google Sheets with calculated dates.")
+        print("Successfully synced action items to Google Sheets.")
     except Exception as e:
         print(f"Error appending to Google Sheets: {e}")
 
