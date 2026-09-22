@@ -75,26 +75,37 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
         raise RuntimeError("GEMINI_API_KEY is missing from environment variables.")
 
     client = genai.Client(api_key=gemini_key)
-    models = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
     
-    # Inject current date explicitly into Gemini's runtime context
+    # Priority list of models including dynamic aliases
+    models = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.1-pro-preview"]
+    
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
     full_prompt = f"{dynamic_prompt}\n\nTranscript:\n{transcript}"
 
+    max_retries = 3
+
     for model_name in models:
-        try:
-            print(f"Attempting MOM generation with Gemini model: {model_name}...")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=full_prompt,
-            )
-            if response.text:
-                print(f"Successfully generated response using {model_name}")
-                return response.text
-        except Exception as e:
-            print(f"FAILED on model {model_name}: {type(e).__name__} - {e}")
-            time.sleep(1)
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"Attempting MOM generation with Gemini model: {model_name} (Attempt {attempt}/{max_retries})...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=full_prompt,
+                )
+                if response.text:
+                    print(f"Successfully generated response using {model_name}")
+                    return response.text
+            except Exception as e:
+                print(f"FAILED on model {model_name} (Attempt {attempt}): {type(e).__name__} - {e}")
+                if "503" in str(e) or "429" in str(e):
+                    # Exponential backoff for 503 high demand or 429 rate limits
+                    sleep_time = 3 * attempt
+                    print(f"Temporary API error encountered. Retrying in {sleep_time}s...")
+                    time.sleep(sleep_time)
+                else:
+                    # Switch to next model immediately for non-transient errors (e.g., 404)
+                    break
 
     raise RuntimeError("All Gemini model generation attempts failed.")
 
