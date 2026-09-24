@@ -12,28 +12,58 @@ import markdown
 import gspread
 from google.oauth2.service_account import Credentials
 from google import genai
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import HTMLResponse
+import gspread
 
 app = FastAPI()
 
-PROCESSED_WEBHOOKS = {}
+# Replace with your actual Google Sheet ID
+SPREADSHEET_ID = "YOUR_GOOGLE_SHEET_ID_HERE"
 
-SYSTEM_PROMPT = """
-You are an executive assistant creating high-grade Minutes of Meeting (MOM).
-Analyze the provided transcript and produce a detailed, highly structured summary.
+@app.get("/complete-task", response_class=HTMLResponse)
+async def complete_task(row: int = Query(...)):
+    """Updates task status in Google Sheet directly via gspread API."""
+    try:
+        if row < 2:
+            raise HTTPException(status_code=400, detail="Invalid row index")
 
-Do NOT repeat the Meeting Title, Date/Time, or Attendees header at the top.
+        # Authenticate with Google Sheets using your existing credentials
+        gc = gspread.service_account(filename="google_credentials.json") # or your gspread auth method
+        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
 
-Structure your response starting directly from these sections:
-1. Executive Summary: High-level overview of the meeting purpose and key outcomes.
-2. Key Discussion Points: Detailed bulleted breakdown of major topics, insights, and updates shared.
-3. Decisions Made: Clear bulleted list of finalized decisions.
-4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority.
-   CRITICAL FOR DEADLINE: The Deadline column MUST be an explicit calendar date formatted strictly as YYYY-MM-DD. Calculate the target date relative to today's date based on the discussion (e.g., if the transcript says "in 2 weeks", output the exact date two weeks from today). NEVER use text like "1 Week", "3-4 Weeks", or "Immediate".
-5. Risks & Open Questions: Any unresolved issues, dependencies, or items for the next meeting.
+        # Fetch Task Name from Column C (3) and update Status in Column G (7) to 'Completed'
+        task_name = sheet.cell(row, 3).value or "Action Item"
+        sheet.update_cell(row, 7, "Completed")
 
-Be thorough, professional, and clear. Avoid generic placeholder text.
-"""
+        # Return clean HTML response page directly to browser
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Task Completed</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding-top: 60px; color: #1e293b; background-color: #f8fafc; }}
+                .card {{ background: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: inline-block; max-width: 80%; }}
+                h2 {{ color: #16a34a; margin-top: 0; }}
+                .task {{ font-size: 18px; font-weight: bold; background: #f1f5f9; padding: 12px 20px; border-radius: 6px; margin: 20px 0; display: inline-block; }}
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <h2>✅ Action Item Completed!</h2>
+                <p>The following task has been marked as <strong>Completed</strong> in your Executive Tracker:</p>
+                <div class="task">{task_name}</div>
+                <p style="color: #64748b; font-size: 14px;">You can safely close this browser window.</p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=200)
+
+    except Exception as e:
+        return HTMLResponse(content=f"<h3>Error updating task: {str(e)}</h3>", status_code=500)
 
 def parse_deadline_to_date(deadline_str: str) -> str:
     """Extracts ISO date or converts text ranges like '3-4 weeks' to explicit dates."""
