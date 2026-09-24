@@ -3,13 +3,17 @@ import hashlib
 import hmac
 import os
 import json
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import HTMLResponse
 import gspread
 
-# Replace with your actual Google Sheet ID
+# 1. Initialize FastAPI FIRST
+app = FastAPI()
+
+# 2. Configuration / Constants
 SPREADSHEET_ID = "YOUR_GOOGLE_SHEET_ID_HERE"
 
+# 3. Routes defined AFTER app initialization
 @app.get("/complete-task", response_class=HTMLResponse)
 async def complete_task(row: int = Query(...)):
     """Updates task status in Google Sheet using environment variable credentials."""
@@ -17,7 +21,6 @@ async def complete_task(row: int = Query(...)):
         if row < 2:
             raise HTTPException(status_code=400, detail="Invalid row index")
 
-        # Load Google Service Account JSON string from Render Environment Variable
         creds_json_str = os.getenv("GOOGLE_CREDENTIALS")
         if not creds_json_str:
             raise Exception("GOOGLE_CREDENTIALS environment variable is not set on Render.")
@@ -27,11 +30,9 @@ async def complete_task(row: int = Query(...)):
         
         sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
 
-        # Fetch Task Name from Column C (index 3) and update Status in Column G (index 7)
         task_name = sheet.cell(row, 3).value or "Action Item"
         sheet.update_cell(row, 7, "Completed")
 
-        # HTML Success Card Page
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -58,7 +59,9 @@ async def complete_task(row: int = Query(...)):
         return HTMLResponse(content=html_content, status_code=200)
 
     except Exception as e:
-        return HTMLResponse(content=f"<h3>Error updating task: {str(e)}</h3>", status_code=500)  
+        return HTMLResponse(content=f"<h3>Error updating task: {str(e)}</h3>", status_code=500)
+
+# (Keep your existing @app.post("/webhook") route below here)
 
 def parse_deadline_to_date(deadline_str: str) -> str:
     """Extracts ISO date or converts text ranges like '3-4 weeks' to explicit dates."""
