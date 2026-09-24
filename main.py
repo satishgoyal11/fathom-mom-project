@@ -21,7 +21,7 @@ async def complete_task(row: int = Query(...)):
         if row < 2:
             raise HTTPException(status_code=400, detail="Invalid row index")
 
-        creds_json_str = os.getenv("GOOGLE_CREDENTIALS")
+        creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
         if not creds_json_str:
             raise Exception("GOOGLE_CREDENTIALS environment variable is not set on Render.")
 
