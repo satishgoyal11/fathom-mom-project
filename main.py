@@ -2,41 +2,36 @@ import base64
 import hashlib
 import hmac
 import os
-import time
 import json
-import re
-from datetime import datetime, timedelta
-import zoneinfo
-import requests
-import markdown
-import gspread
-from google.oauth2.service_account import Credentials
-from google import genai
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse
 import gspread
-
-app = FastAPI()
 
 # Replace with your actual Google Sheet ID
 SPREADSHEET_ID = "YOUR_GOOGLE_SHEET_ID_HERE"
 
 @app.get("/complete-task", response_class=HTMLResponse)
 async def complete_task(row: int = Query(...)):
-    """Updates task status in Google Sheet directly via gspread API."""
+    """Updates task status in Google Sheet using environment variable credentials."""
     try:
         if row < 2:
             raise HTTPException(status_code=400, detail="Invalid row index")
 
-        # Authenticate with Google Sheets using your existing credentials
-        gc = gspread.service_account(filename="google_credentials.json") # or your gspread auth method
+        # Load Google Service Account JSON string from Render Environment Variable
+        creds_json_str = os.getenv("GOOGLE_CREDENTIALS")
+        if not creds_json_str:
+            raise Exception("GOOGLE_CREDENTIALS environment variable is not set on Render.")
+
+        creds_dict = json.loads(creds_json_str)
+        gc = gspread.service_account_from_dict(creds_dict)
+        
         sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
 
-        # Fetch Task Name from Column C (3) and update Status in Column G (7) to 'Completed'
+        # Fetch Task Name from Column C (index 3) and update Status in Column G (index 7)
         task_name = sheet.cell(row, 3).value or "Action Item"
         sheet.update_cell(row, 7, "Completed")
 
-        # Return clean HTML response page directly to browser
+        # HTML Success Card Page
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -63,7 +58,7 @@ async def complete_task(row: int = Query(...)):
         return HTMLResponse(content=html_content, status_code=200)
 
     except Exception as e:
-        return HTMLResponse(content=f"<h3>Error updating task: {str(e)}</h3>", status_code=500)
+        return HTMLResponse(content=f"<h3>Error updating task: {str(e)}</h3>", status_code=500)  
 
 def parse_deadline_to_date(deadline_str: str) -> str:
     """Extracts ISO date or converts text ranges like '3-4 weeks' to explicit dates."""
