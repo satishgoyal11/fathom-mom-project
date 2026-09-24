@@ -3,36 +3,42 @@ import hashlib
 import hmac
 import os
 import json
-from fastapi import FastAPI, Query, HTTPException, Request
+import logging
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse
 import gspread
 
-# 1. Initialize FastAPI FIRST
-app = FastAPI()
+# Initialize logging for Render dashboard
+logging.basicConfig(level=logging.INFO)
 
-# 2. Configuration / Constants
-SPREADSHEET_ID = "YOUR_GOOGLE_SHEET_ID_HERE"
-
-# 3. Routes defined AFTER app initialization
 @app.get("/complete-task", response_class=HTMLResponse)
 async def complete_task(row: int = Query(...)):
-    """Updates task status in Google Sheet using environment variable credentials."""
+    """Updates task status in Google Sheet using environment variables."""
     try:
         if row < 2:
             raise HTTPException(status_code=400, detail="Invalid row index")
 
-        creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
+        # 1. Fetch credentials JSON string
+        creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS")
         if not creds_json_str:
-            raise Exception("GOOGLE_CREDENTIALS environment variable is not set on Render.")
+            raise Exception("Neither GOOGLE_CREDENTIALS_JSON nor GOOGLE_CREDENTIALS environment variable is set on Render.")
 
+        # 2. Fetch Spreadsheet ID
+        spreadsheet_id = os.getenv("SPREADSHEET_ID")
+        if not spreadsheet_id:
+            raise Exception("SPREADSHEET_ID environment variable is not set on Render.")
+
+        # 3. Authenticate with gspread
         creds_dict = json.loads(creds_json_str)
         gc = gspread.service_account_from_dict(creds_dict)
         
-        sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
+        # 4. Open Google Sheet and update row
+        sheet = gc.open_by_key(spreadsheet_id).sheet1
 
         task_name = sheet.cell(row, 3).value or "Action Item"
         sheet.update_cell(row, 7, "Completed")
 
+        # 5. Success HTML Card
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -59,7 +65,9 @@ async def complete_task(row: int = Query(...)):
         return HTMLResponse(content=html_content, status_code=200)
 
     except Exception as e:
-        return HTMLResponse(content=f"<h3>Error updating task: {str(e)}</h3>", status_code=500)
+        error_msg = str(e) if str(e) else repr(e)
+        logging.error(f"Complete Task Error: {error_msg}")
+        return HTMLResponse(content=f"<h3>Error updating task: {error_msg}</h3>", status_code=500)
 
 # (Keep your existing @app.post("/webhook") route below here)
 
