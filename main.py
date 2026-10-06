@@ -72,7 +72,7 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Updated active model fallback list
+    # Active supported models list
     models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
@@ -223,100 +223,4 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
     try:
         response = requests.post(url, json=payload, headers=headers)
         print(f"Resend Status Code: {response.status_code}")
-    except Exception as err:
-        print(f"Failed to connect to Resend API: {err}")
-
-@app.get("/")
-@app.get("/webhook")
-async def root_status():
-    return {"status": "online", "message": "Fathom MOM Webhook Service is running cleanly."}
-
-@app.post("/")
-@app.post("/webhook")
-async def handle_webhook(request: Request):
-    webhook_id = request.headers.get("webhook-id") or request.headers.get("x-request-id")
-    webhook_timestamp = request.headers.get("webhook-timestamp")
-    webhook_signature = request.headers.get("webhook-signature")
-
-    current_time = time.time()
-    expired_keys = [k for k, v in PROCESSED_WEBHOOKS.items() if current_time - v > 600]
-    for k in expired_keys:
-        del PROCESSED_WEBHOOKS[k]
-
-    if webhook_id:
-        if webhook_id in PROCESSED_WEBHOOKS:
-            return {"status": "ignored", "reason": "Duplicate webhook payload"}
-        PROCESSED_WEBHOOKS[webhook_id] = current_time
-
-    raw_body = await request.body()
-    secret = os.getenv("FATHOM_WEBHOOK_SECRET")
-
-    if secret and webhook_signature:
-        try:
-            signed_content = f"{webhook_id}.{webhook_timestamp}.{raw_body.decode('utf-8')}"
-            secret_bytes = base64.b64decode(secret.split("_")[1])
-            expected_sig = base64.b64encode(
-                hmac.new(secret_bytes, signed_content.encode("utf-8"), hashlib.sha256).digest()
-            ).decode("utf-8")
-
-            if not any(
-                sig.strip() == f"v1,{expected_sig}"
-                for sig in webhook_signature.split(" ")
-            ):
-                print("Warning: Invalid webhook signature. Proceeding for test compatibility...")
-        except Exception as sig_err:
-            print(f"Signature check skipped/failed: {sig_err}")
-
-    body = await request.json()
-    print(f"Received Webhook Body: {json.dumps(body)[:300]}...")
-    
-    meeting_title = body.get("title") or body.get("name") or "General Discussion"
-    
-    created_at_raw = body.get("created_at") or body.get("started_at")
-    ist_tz = zoneinfo.ZoneInfo("Asia/Kolkata")
-    if created_at_raw:
-        try:
-            dt_utc = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
-            dt_ist = dt_utc.astimezone(ist_tz)
-            meeting_date = dt_ist.strftime("%B %d, %Y at %I:%M %p IST")
-        except Exception:
-            meeting_date = created_at_raw
-    else:
-        meeting_date = datetime.now(ist_tz).strftime("%B %d, %Y at %I:%M %p IST")
-
-    attendees_list = []
-    attendees_data = body.get("recording_attendees") or body.get("attendees") or []
-    
-    if isinstance(attendees_data, list):
-        for att in attendees_data:
-            if isinstance(att, dict):
-                name = att.get("name") or att.get("display_name") or att.get("email")
-                if name:
-                    attendees_list.append(name)
-            elif isinstance(att, str):
-                attendees_list.append(att)
-
-    if not attendees_list:
-        speakers_data = body.get("speakers") or []
-        for spk in speakers_data:
-            if isinstance(spk, dict) and spk.get("name"):
-                attendees_list.append(spk.get("name"))
-
-    attendees_str = ", ".join(list(set(attendees_list))) if attendees_list else "Extracted from Call"
-
-    transcript = (
-        body.get("transcript") 
-        or body.get("transcript_text") 
-        or body.get("summary") 
-        or "John and Satish discussed project timelines. Satish will finalize the deployment strategy by next week."
-    )
-
-    mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, transcript)
-
-    # Send HTML Email
-    send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
-
-    # Sync action items to Google Sheets
-    append_action_items_to_sheets(mom_result, meeting_title)
-
-    return {"status": "success", "mom": mom_result}
+    except Exception as err
