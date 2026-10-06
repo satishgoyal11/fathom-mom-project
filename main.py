@@ -2,76 +2,38 @@ import base64
 import hashlib
 import hmac
 import os
-import json
 import time
-import logging
-from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import HTMLResponse
+import json
+import re
+from datetime import datetime, timedelta
+import zoneinfo
+import requests
+import markdown
 import gspread
+from google.oauth2.service_account import Credentials
+from google import genai
+from fastapi import FastAPI, HTTPException, Request
+
 app = FastAPI()
 
-# Initialize logging for Render dashboard
-logging.basicConfig(level=logging.INFO)
+PROCESSED_WEBHOOKS = {}
 
-@app.get("/complete-task", response_class=HTMLResponse)
-async def complete_task(row: int = Query(...)):
-    """Updates task status in Google Sheet using environment variables."""
-    try:
-        if row < 2:
-            raise HTTPException(status_code=400, detail="Invalid row index")
+SYSTEM_PROMPT = """
+You are an executive assistant creating high-grade Minutes of Meeting (MOM).
+Analyze the provided transcript and produce a detailed, highly structured summary.
 
-        # 1. Fetch credentials JSON string
-        creds_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON") or os.getenv("GOOGLE_CREDENTIALS")
-        if not creds_json_str:
-            raise Exception("Neither GOOGLE_CREDENTIALS_JSON nor GOOGLE_CREDENTIALS environment variable is set on Render.")
+Do NOT repeat the Meeting Title, Date/Time, or Attendees header at the top.
 
-        # 2. Fetch Spreadsheet ID
-        spreadsheet_id = os.getenv("SPREADSHEET_ID")
-        if not spreadsheet_id:
-            raise Exception("SPREADSHEET_ID environment variable is not set on Render.")
+Structure your response starting directly from these sections:
+1. Executive Summary: High-level overview of the meeting purpose and key outcomes.
+2. Key Discussion Points: Detailed bulleted breakdown of major topics, insights, and updates shared.
+3. Decisions Made: Clear bulleted list of finalized decisions.
+4. Action Items Table: A markdown table with columns: Action Item | Owner | Deadline | Priority.
+   CRITICAL FOR DEADLINE: The Deadline column MUST be an explicit calendar date formatted strictly as YYYY-MM-DD. Calculate the target date relative to today's date based on the discussion (e.g., if the transcript says "in 2 weeks", output the exact date two weeks from today). NEVER use text like "1 Week", "3-4 Weeks", or "Immediate".
+5. Risks & Open Questions: Any unresolved issues, dependencies, or items for the next meeting.
 
-        # 3. Authenticate with gspread
-        creds_dict = json.loads(creds_json_str)
-        gc = gspread.service_account_from_dict(creds_dict)
-        
-        # 4. Open Google Sheet and update row
-        sheet = gc.open_by_key(spreadsheet_id).sheet1
-
-        task_name = sheet.cell(row, 3).value or "Action Item"
-        sheet.update_cell(row, 7, "Completed")
-
-        # 5. Success HTML Card
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Task Completed</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding-top: 60px; color: #1e293b; background-color: #f8fafc; }}
-                .card {{ background: #ffffff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: inline-block; max-width: 80%; }}
-                h2 {{ color: #16a34a; margin-top: 0; }}
-                .task {{ font-size: 18px; font-weight: bold; background: #f1f5f9; padding: 12px 20px; border-radius: 6px; margin: 20px 0; display: inline-block; }}
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h2>✅ Action Item Completed!</h2>
-                <p>The following task has been marked as <strong>Completed</strong> in your Executive Tracker:</p>
-                <div class="task">{task_name}</div>
-                <p style="color: #64748b; font-size: 14px;">You can safely close this browser window.</p>
-            </div>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=html_content, status_code=200)
-
-    except Exception as e:
-        error_msg = str(e) if str(e) else repr(e)
-        logging.error(f"Complete Task Error: {error_msg}")
-        return HTMLResponse(content=f"<h3>Error updating task: {error_msg}</h3>", status_code=500)
-
-# (Keep your existing @app.post("/webhook") route below here)
+Be thorough, professional, and clear. Avoid generic placeholder text.
+"""
 
 def parse_deadline_to_date(deadline_str: str) -> str:
     """Extracts ISO date or converts text ranges like '3-4 weeks' to explicit dates."""
