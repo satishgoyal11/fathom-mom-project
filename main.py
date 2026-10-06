@@ -72,8 +72,8 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Updated active model priority list
-    models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+    # Updated active model fallback list
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
     full_prompt = f"{dynamic_prompt}\n\nTranscript:\n{transcript}"
