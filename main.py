@@ -8,6 +8,7 @@ import logging
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse
 import gspread
+app = FastAPI()
 
 # Initialize logging for Render dashboard
 logging.basicConfig(level=logging.INFO)
