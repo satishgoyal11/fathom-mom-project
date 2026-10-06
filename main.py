@@ -40,7 +40,6 @@ def parse_deadline_to_date(deadline_str: str) -> str:
     today = datetime.now()
     text = deadline_str.strip().lower()
 
-    # 1. Check if Gemini already provided a valid YYYY-MM-DD date
     iso_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", text)
     if iso_match:
         return iso_match.group(0)
@@ -48,7 +47,6 @@ def parse_deadline_to_date(deadline_str: str) -> str:
     if not text or "immediate" in text or "asap" in text or "today" in text:
         return today.strftime("%Y-%m-%d")
 
-    # 2. Extract digits from single numbers or ranges (e.g. "3-4 weeks", "2 weeks", "1 month")
     numbers = [int(n) for n in re.findall(r"\d+", text)]
     
     if numbers:
@@ -74,7 +72,8 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    # Updated active model priority list
+    models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
     full_prompt = f"{dynamic_prompt}\n\nTranscript:\n{transcript}"
@@ -227,6 +226,12 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
     except Exception as err:
         print(f"Failed to connect to Resend API: {err}")
 
+@app.get("/")
+@app.get("/webhook")
+async def root_status():
+    return {"status": "online", "message": "Fathom MOM Webhook Service is running cleanly."}
+
+@app.post("/")
 @app.post("/webhook")
 async def handle_webhook(request: Request):
     webhook_id = request.headers.get("webhook-id") or request.headers.get("x-request-id")
@@ -246,7 +251,6 @@ async def handle_webhook(request: Request):
     raw_body = await request.body()
     secret = os.getenv("FATHOM_WEBHOOK_SECRET")
 
-    # Only enforce signature validation if BOTH secret and signature header are provided (prevents test button 401s)
     if secret and webhook_signature:
         try:
             signed_content = f"{webhook_id}.{webhook_timestamp}.{raw_body.decode('utf-8')}"
@@ -300,7 +304,6 @@ async def handle_webhook(request: Request):
 
     attendees_str = ", ".join(list(set(attendees_list))) if attendees_list else "Extracted from Call"
 
-    # Fallback to alternate transcript keys or default text for test webhooks
     transcript = (
         body.get("transcript") 
         or body.get("transcript_text") 
