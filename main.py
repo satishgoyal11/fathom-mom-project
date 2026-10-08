@@ -72,8 +72,8 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Active supported models list
-    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    # Updated active model fallback list
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
     full_prompt = f"{dynamic_prompt}\n\nTranscript:\n{transcript}"
@@ -223,6 +223,7 @@ def send_html_email_via_resend(mom_markdown: str, meeting_title: str, meeting_da
     try:
         response = requests.post(url, json=payload, headers=headers)
         print(f"Resend Status Code: {response.status_code}")
+        print(f"Resend Response Body: {response.text}")
     except Exception as err:
         print(f"Failed to connect to Resend API: {err}")
 
@@ -313,7 +314,7 @@ async def handle_webhook(request: Request):
 
     mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, transcript)
 
-    # Send HTML Email
+    # Send HTML Email via Resend
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
 
     # Sync action items to Google Sheets
