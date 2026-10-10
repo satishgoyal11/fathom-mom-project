@@ -40,7 +40,6 @@ def clean_transcript_payload(raw_transcript) -> str:
     if not raw_transcript:
         return ""
 
-    # Case 1: If it's already a clean string
     if isinstance(raw_transcript, str):
         try:
             parsed = json.loads(raw_transcript)
@@ -48,7 +47,6 @@ def clean_transcript_payload(raw_transcript) -> str:
         except Exception:
             return raw_transcript
 
-    # Case 2: If Fathom sent a list of utterance objects
     if isinstance(raw_transcript, list):
         dialogue_lines = []
         for entry in raw_transcript:
@@ -66,7 +64,6 @@ def clean_transcript_payload(raw_transcript) -> str:
                 dialogue_lines.append(entry)
         return "\n".join(dialogue_lines)
 
-    # Case 3: If it's a raw dictionary wrapper
     if isinstance(raw_transcript, dict):
         text = raw_transcript.get("text") or raw_transcript.get("transcript")
         if text:
@@ -111,34 +108,30 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+    # Standard official active aliases
+    models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
     full_prompt = f"{dynamic_prompt}\n\nTranscript:\n{transcript}"
 
-    max_retries = 3
+    last_error = None
 
     for model_name in models:
-        for attempt in range(1, max_retries + 1):
-            try:
-                print(f"Attempting MOM generation with Gemini model: {model_name} (Attempt {attempt}/{max_retries})...")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=full_prompt,
-                )
-                if response.text:
-                    print(f"Successfully generated response using {model_name}")
-                    return response.text
-            except Exception as e:
-                print(f"FAILED on model {model_name} (Attempt {attempt}): {type(e).__name__} - {e}")
-                if "503" in str(e) or "429" in str(e):
-                    sleep_time = 3 * attempt
-                    print(f"Temporary API error encountered. Retrying in {sleep_time}s...")
-                    time.sleep(sleep_time)
-                else:
-                    break
+        try:
+            print(f"Attempting MOM generation with Gemini model: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=full_prompt,
+            )
+            if response and response.text:
+                print(f"Successfully generated response using {model_name}")
+                return response.text
+        except Exception as e:
+            last_error = str(e)
+            print(f"FAILED on model {model_name}: {type(e).__name__} - {e}")
+            continue
 
-    raise RuntimeError("All Gemini model generation attempts failed.")
+    raise RuntimeError(f"All Gemini model generation attempts failed. Last error: {last_error}")
 
 def append_action_items_to_sheets(mom_markdown: str, meeting_title: str):
     credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
@@ -343,7 +336,6 @@ async def handle_webhook(request: Request):
 
     attendees_str = ", ".join(list(set(attendees_list))) if attendees_list else "Extracted from Call"
 
-    # Safely extract and clean transcript data from Fathom payload
     raw_transcript_data = (
         body.get("transcript") 
         or body.get("transcript_text") 
@@ -359,10 +351,7 @@ async def handle_webhook(request: Request):
         print(f"Gemini generation error: {gemini_err}")
         mom_result = f"### Executive Summary\nFailed to format transcript via AI.\n\n### Transcript Preview\n{cleaned_transcript[:500]}"
 
-    # Send HTML Email via Resend
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
-
-    # Sync action items to Google Sheets
     append_action_items_to_sheets(mom_result, meeting_title)
 
     return {"status": "success", "mom": mom_result}
