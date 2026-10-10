@@ -108,7 +108,7 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Standard official active aliases
+    # Updated active model priority list
     models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
@@ -127,8 +127,8 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
                 print(f"Successfully generated response using {model_name}")
                 return response.text
         except Exception as e:
-            last_error = str(e)
-            print(f"FAILED on model {model_name}: {type(e).__name__} - {e}")
+            last_error = f"{type(e).__name__}: {str(e)}"
+            print(f"FAILED on model {model_name}: {last_error}")
             continue
 
     raise RuntimeError(f"All Gemini model generation attempts failed. Last error: {last_error}")
@@ -349,7 +349,7 @@ async def handle_webhook(request: Request):
         mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, cleaned_transcript)
     except Exception as gemini_err:
         print(f"Gemini generation error: {gemini_err}")
-        mom_result = f"### Executive Summary\nFailed to format transcript via AI.\n\n### Transcript Preview\n{cleaned_transcript[:500]}"
+        mom_result = f"### Executive Summary\nFailed to format transcript via AI. Error: {str(gemini_err)}\n\n### Transcript Preview\n{cleaned_transcript[:500]}"
 
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
     append_action_items_to_sheets(mom_result, meeting_title)
