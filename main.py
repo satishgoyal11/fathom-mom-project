@@ -35,6 +35,45 @@ Structure your response starting directly from these sections:
 Be thorough, professional, and clear. Avoid generic placeholder text.
 """
 
+def clean_transcript_payload(raw_transcript) -> str:
+    """Converts raw transcript strings, dicts, or lists of dicts into formatted dialogue."""
+    if not raw_transcript:
+        return ""
+
+    # Case 1: If it's already a clean string
+    if isinstance(raw_transcript, str):
+        try:
+            parsed = json.loads(raw_transcript)
+            return clean_transcript_payload(parsed)
+        except Exception:
+            return raw_transcript
+
+    # Case 2: If Fathom sent a list of utterance objects
+    if isinstance(raw_transcript, list):
+        dialogue_lines = []
+        for entry in raw_transcript:
+            if isinstance(entry, dict):
+                speaker_info = entry.get("speaker") or {}
+                if isinstance(speaker_info, dict):
+                    speaker_name = speaker_info.get("display_name") or speaker_info.get("name") or "Speaker"
+                else:
+                    speaker_name = str(speaker_info) if speaker_info else "Speaker"
+                
+                text = entry.get("text") or entry.get("words") or ""
+                if text:
+                    dialogue_lines.append(f"{speaker_name}: {text}")
+            elif isinstance(entry, str):
+                dialogue_lines.append(entry)
+        return "\n".join(dialogue_lines)
+
+    # Case 3: If it's a raw dictionary wrapper
+    if isinstance(raw_transcript, dict):
+        text = raw_transcript.get("text") or raw_transcript.get("transcript")
+        if text:
+            return clean_transcript_payload(text)
+
+    return str(raw_transcript)
+
 def parse_deadline_to_date(deadline_str: str) -> str:
     """Extracts ISO date or converts text ranges like '3-4 weeks' to explicit dates."""
     today = datetime.now()
@@ -72,7 +111,6 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Active Gemini models list
     models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
@@ -305,18 +343,21 @@ async def handle_webhook(request: Request):
 
     attendees_str = ", ".join(list(set(attendees_list))) if attendees_list else "Extracted from Call"
 
-    transcript = (
+    # Safely extract and clean transcript data from Fathom payload
+    raw_transcript_data = (
         body.get("transcript") 
         or body.get("transcript_text") 
         or body.get("summary") 
-        or "John and Satish discussed project timelines. Satish will finalize the deployment strategy by next week."
+        or "Satish and team discussed the Chilhati DTMS issue and VPN access settings."
     )
+    
+    cleaned_transcript = clean_transcript_payload(raw_transcript_data)
 
     try:
-        mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, transcript)
+        mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, cleaned_transcript)
     except Exception as gemini_err:
-        print(f"Gemini generation fallback engaged due to: {gemini_err}")
-        mom_result = f"### Executive Summary\nMeeting processed successfully. Raw content captured.\n\n### Key Discussion Points\n- {transcript[:300]}"
+        print(f"Gemini generation error: {gemini_err}")
+        mom_result = f"### Executive Summary\nFailed to format transcript via AI.\n\n### Transcript Preview\n{cleaned_transcript[:500]}"
 
     # Send HTML Email via Resend
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
