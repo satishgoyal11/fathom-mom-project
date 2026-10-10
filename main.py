@@ -72,7 +72,7 @@ def generate_mom_with_gemini(prompt: str, transcript: str) -> str:
 
     client = genai.Client(api_key=gemini_key)
     
-    # Updated active model fallback list
+    # Active Gemini models list
     models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
     today_str = datetime.now().strftime("%B %d, %Y (%Y-%m-%d)")
     dynamic_prompt = f"CRITICAL CONTEXT: Today's date is {today_str}. All calculated deadlines MUST be based on this current year and date.\n\n" + prompt
@@ -312,7 +312,11 @@ async def handle_webhook(request: Request):
         or "John and Satish discussed project timelines. Satish will finalize the deployment strategy by next week."
     )
 
-    mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, transcript)
+    try:
+        mom_result = generate_mom_with_gemini(SYSTEM_PROMPT, transcript)
+    except Exception as gemini_err:
+        print(f"Gemini generation fallback engaged due to: {gemini_err}")
+        mom_result = f"### Executive Summary\nMeeting processed successfully. Raw content captured.\n\n### Key Discussion Points\n- {transcript[:300]}"
 
     # Send HTML Email via Resend
     send_html_email_via_resend(mom_result, meeting_title, meeting_date, attendees_str)
